@@ -1,0 +1,21 @@
+# Core ML stack
+torch
+torchvision
+transformers
+peft
+huggingface_hub
+accelerate
+safetensors
+tqdm
+bitsandbytes
+
+# Vision and numerical stack
+numpy<2
+opencv-python
+
+# Notebook and evaluation helpers
+datasets
+evaluate
+rouge_score
+bert-score
+nltk

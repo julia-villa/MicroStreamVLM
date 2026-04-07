@@ -1,0 +1,4 @@
+# Model weights and checkpoints - too large for GitHub
+*.pt
+*.checkpoint
+*.tar.gz
