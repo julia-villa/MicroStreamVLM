@@ -12,12 +12,12 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--stage2-checkpoint-dir",
-        default="FitCoach/outputs/stage2_xattn_llamainstruct_a40/final",
+        default="outputs/stage2_xattn_llamainstruct_a40/final",
         help="Path to the validated stage-2 checkpoint directory",
     )
     parser.add_argument(
         "--stage3-adapter-dir",
-        default="FitCoach/outputs/stage3_llama_instruct_v2-1/final_adapter",
+        default="outputs/stage3_llama_instruct_v2-1/final_adapter",
         help="Path to the trained stage-3 LoRA adapter directory",
     )
     parser.add_argument(

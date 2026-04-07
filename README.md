@@ -1,214 +1,281 @@
 # MicroStreamVLM
 
-A two-stage vision-language model for real-time fitness coaching feedback from video streams, built on top of `meta-llama/Llama-3.2-3B-Instruct` with a frozen EfficientNet 3D-CNN stream encoder.
+MicroStreamVLM is a two-stage vision-language pipeline for long-range fitness coaching from video. The final project system is built on top of `meta-llama/Llama-3.2-3B-Instruct`, a frozen EfficientNet-based 3D-CNN stream encoder, trainable cross-attention alignment in Stage 2, and LoRA-based long-range fine-tuning in Stage 3.
 
-- **Stage 2** — cross-attention (xattn) alignment: only the inserted cross-attention layers are trained; everything else is frozen.
-- **Stage 3** — LoRA fine-tuning on long-range video segments for temporal feedback generation.
+The repository contains the code needed to:
+- fine-tune the Stage 2 xattn-only model,
+- fine-tune the Stage 3 LoRA model,
+- build benchmark manifests,
+- run benchmark evaluation, and
+- run live webcam inference.
+
+This is a clean code release. Large external assets such as datasets and model weights are **not** bundled in the GitHub repository.
+
+---
+
+## Repository Structure
+
+```text
+MicroStreamVLM/
+├── README.md
+├── requirements.txt
+├── ckpts_efficientnet/
+│   └── fitness_ally_hypermodel/
+├── data/
+├── notebooks/
+│   ├── stage2_xattn_llama32_a40_instruct.ipynb
+│   └── stage3_lora_long_range_a40_e15_instruct-v2-1.ipynb
+├── outputs/
+├── scripts/
+│   ├── stage3_eval.py
+│   ├── stage3_make_manifest.py
+│   └── stage3_webcam_infer.py
+└── src/
+    ├── chat_format.py
+    ├── constants.py
+    ├── utils.py
+    ├── custom_llama/
+    ├── stage2/
+    ├── stage3/
+    └── vision_modules/
+```
+
+Key code paths:
+- Stage 2 training: `src/stage2/`
+- Stage 3 training and inference: `src/stage3/`
+- Instruct chat-format alignment: `src/chat_format.py`
+- Vision backbone and cross-attention modules: `src/vision_modules/`, `src/custom_llama/`
+- Standalone benchmark tooling: `scripts/stage3_make_manifest.py`, `scripts/stage3_eval.py`
+- Live webcam demo: `scripts/stage3_webcam_infer.py`
 
 ---
 
 ## Requirements
 
 - Python 3.10+
-- A GPU is strongly recommended (tested on NVIDIA A40 and Apple Silicon MPS)
 - A Hugging Face account with access to the gated [`meta-llama/Llama-3.2-3B-Instruct`](https://huggingface.co/meta-llama/Llama-3.2-3B-Instruct) checkpoint
-- The EfficientNet vision checkpoint — already included in the repo at:
-  - `Stage2Llama3.2-3b-Instruct/ckpts_efficientnet/fitness_ally_hypermodel/efficientnet4Lite_1.8.3.checkpoint`
-  - `Stage3Llama3.2-3b-Instruct/ckpts_efficientnet/fitness_ally_hypermodel/efficientnet4Lite_1.8.3.checkpoint`
+- A GPU is strongly recommended
+  - tested on NVIDIA A40
+  - tested on Apple Silicon MPS for local runs
 
----
-
-## Installation
+Install dependencies with:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-For QLoRA (4-bit quantization, CUDA only), `bitsandbytes` is included in `requirements.txt` but only used when `use_qlora=True` is passed at training time.
-
-For evaluation metrics (METEOR, ROUGE-L, BERTScore), the following packages are required and are already listed:
-
-```
-evaluate  rouge_score  bert-score  nltk  datasets
-```
+Notes:
+- `bitsandbytes` is listed for QLoRA-style runs on CUDA only
+- evaluation uses `evaluate`, `rouge_score`, `bert-score`, `datasets`, and `nltk`
+- the repo pins `numpy<2` to avoid binary compatibility issues with parts of the stack
 
 ---
 
-## Pre-trained Checkpoints
+## What Is Not Included
 
-The repo already includes trained outputs — you do not need to train from scratch to run evaluation or inference:
+The following assets are **not included** in this GitHub repository because they are too large to distribute through GitHub directly:
 
-- **Stage 2 checkpoint** — `Stage2Llama3.2-3b-Instruct_Output&Weights/` contains a ready-to-use Stage 2 checkpoint (`xattn_state_dict.pt`, `stage2_config.json`, tokenizer files).
-- **Stage 3 outputs** — `Stage3Llama3.2-4b-Instruct_Outputs/` contains `benchmark_manifest.json`, `benchmark_predictions_pilot32.json`, and `benchmark_metrics_pilot32.json`. You can run evaluation directly against these.
+- raw QEVD / QEVD-FIT-COACH dataset files
+- raw QEVD-FIT-COACH benchmark videos
+- EfficientNet 3D-CNN checkpoint weights
+- trained Stage 2 checkpoints
+- trained Stage 3 LoRA adapter weights
+- cached `.pt` feature files and other large training artifacts
+
+### External assets you must provide manually
+
+QEVD dataset and QEVD-FIT-COACH data:
+- https://www.qualcomm.com/developer/software/qevd-dataset
+
+Original Qualcomm FitCoach / Stream-VLM repository:
+- https://github.com/Qualcomm-AI-research/FitCoach
+
+Paper:
+- https://arxiv.org/pdf/2407.08101v2
+
+The EfficientNet 3D-CNN checkpoint must be downloaded manually using the original Qualcomm FitCoach repository instructions / release assets and placed under:
+
+```text
+ckpts_efficientnet/fitness_ally_hypermodel/
+```
+
+We also do **not** provide our trained Stage 2 or Stage 3 weights in this repository, because those checkpoint files are too large for GitHub.
 
 ---
 
-## Data Layout
+## Expected Data Layout
 
-The `data/` directory is **not included** in the repo and must be provided separately. Both stages expect it at `<repo_root>/data/combined/`:
+The `data/` directory is intentionally empty in this repository. After downloading the required data, place it in the following structure:
 
-```
+```text
 data/combined/
-  short_clips/                         # short video clips (Stage 2)
+  short_clips/
   fine_grained_labels.json
   feedbacks_short_clips.json
   questions.json
-  long_range_videos_train/             # long-range videos + timestamp files (Stage 3)
+  long_range_videos_train/
   long_range_videos_benchmark/
   feedbacks_long_range_train.json
   feedbacks_long_range_benchmark.json
 ```
 
----
-
-## Stage 2 — XAttn Alignment Training
-
-Open and run the notebook:
-
-```
-Stage2Llama3.2-3b-Instruct/notebooks/stage2_xattn_llama32_a40_instruct.ipynb
-```
-
-> **Note:** The notebook hardcodes `repo_root` to a cluster path at the top of cell 1. Update it to your local path before running.
-
-Key configuration at the top of the notebook:
-
-| Variable | Description |
-|---|---|
-| `PROFILE` | `"cluster_a40"` or `"mac_m3_max"` |
-| `repo_root` | **Must be updated** — set to the `Stage2Llama3.2-3b-Instruct/` directory |
-| `config["llm_model_name_or_path"]` | HF model ID or local path to Llama 3.2 3B Instruct |
-| `config["vision_checkpoint_path"]` | `repo_root / "ckpts_efficientnet/fitness_ally_hypermodel/efficientnet4Lite_1.8.3.checkpoint"` |
-| `config["data_root"]` | Path to `data/combined/` directory (not included in repo) |
-| `config["output_dir"]` | Where to save checkpoints |
-
-The notebook trains for 2 epochs and saves per-epoch checkpoints plus a `final/` checkpoint. The final checkpoint directory contains:
-
-```
-final/
-  stage2_config.json       # metadata including xattn_config and llm path
-  xattn_state_dict.pt      # trained xattn weights
-  tokenizer files
-```
+Expected purpose of these assets:
+- `short_clips/` and associated annotations are used for Stage 2
+- `long_range_videos_train/` and `feedbacks_long_range_train.json` are used for Stage 3 training
+- `long_range_videos_benchmark/` and `feedbacks_long_range_benchmark.json` are used for benchmark segmentation and evaluation
 
 ---
 
-## Stage 3 — LoRA Fine-Tuning
+## Stage 2 Fine-Tuning
 
-Open and run the notebook:
+Notebook:
+- `notebooks/stage2_xattn_llama32_a40_instruct.ipynb`
 
+This notebook trains the xattn-only adaptation stage:
+- frozen LLM backbone
+- frozen EfficientNet stream encoder
+- trainable cross-attention pathway only
+
+You must supply:
+- the Hugging Face `meta-llama/Llama-3.2-3B-Instruct` model
+- the EfficientNet 3D-CNN checkpoint under `ckpts_efficientnet/fitness_ally_hypermodel/`
+- the Stage 2 short-clip training data under `data/combined/`
+
+Expected output location for a trained Stage 2 run:
+
+```text
+outputs/<stage2_run_name>/final/
 ```
-Stage3Llama3.2-3b-Instruct/src/notebook/stage3_lora_long_range_a40_e15_instruct.ipynb
+
+A valid Stage 2 final checkpoint directory should contain at least:
+- `stage2_config.json`
+- `xattn_state_dict.pt`
+- tokenizer files
+- config files
+
+Important note:
+- notebook cells may still contain cluster-era example paths or profile presets; update them locally before running on your machine
+
+---
+
+## Stage 3 Fine-Tuning
+
+Notebook:
+- `notebooks/stage3_lora_long_range_a40_e15_instruct-v2-1.ipynb`
+
+This notebook trains the long-range coaching stage:
+- frozen vision encoder
+- frozen Stage 2 xattn pathway
+- trainable LoRA adapters on the LLM
+
+You must supply:
+- a valid Stage 2 checkpoint directory under `outputs/.../final/`
+- the EfficientNet 3D-CNN checkpoint under `ckpts_efficientnet/fitness_ally_hypermodel/`
+- the long-range training and benchmark data under `data/combined/`
+
+Expected output location for a trained Stage 3 run:
+
+```text
+outputs/<stage3_run_name>/final_adapter/
 ```
 
-> **Note:** The notebook hardcodes `stage2_checkpoint_dir` to a cluster path. Update it to point to `Stage2Llama3.2-3b-Instruct_Output&Weights/` (the included Stage 2 checkpoint) or your own trained output.
+A valid Stage 3 adapter directory is expected to contain the PEFT adapter files produced by training, along with the saved adapter metadata.
 
-Key configuration at the top of the notebook:
-
-| Variable | Description |
-|---|---|
-| `PROFILE` | `"cluster_a40"` or `"mac_m3_max"` |
-| `stage2_checkpoint_dir` | **Must be updated** — point to `Stage2Llama3.2-3b-Instruct_Output&Weights/` or a trained Stage 2 `final/` dir |
-| `vision_checkpoint_path` | `Stage3Llama3.2-3b-Instruct/ckpts_efficientnet/fitness_ally_hypermodel/efficientnet4Lite_1.8.3.checkpoint` |
-| `use_qlora` | `True` to enable QLoRA (CUDA only, requires `bitsandbytes`) |
-
-The notebook will:
-1. Cache encoded vision features for all train/val/benchmark segments
-2. Build the Stage 3 LoRA model on top of the Stage 2 checkpoint
-3. Train for the configured number of epochs
-4. Generate benchmark predictions and run evaluation metrics
-
-The final adapter is saved to `outputs/.../final_adapter/`.
+Important notes:
+- notebook cells may still contain cluster-era example paths or profile presets and should be updated locally
+- bundled JSON files under `outputs/` are archival examples only; they are not substitutes for runnable Stage 2 or Stage 3 weights
 
 ---
 
 ## Evaluation
 
-### Building a Segment Manifest
+### 1. Build a segment manifest
 
-If you have raw long-range metadata, convert it to the segment manifest format first:
+If you have raw long-range metadata and videos, first convert them into the benchmark/train manifest format:
 
 ```bash
-python Stage3Llama3.2-3b-Instruct/scripts/stage3_make_manifest.py \
-  --metadata-path path/to/feedbacks_long_range_benchmark.json \
-  --video-dir path/to/long_range_videos_benchmark \
+python scripts/stage3_make_manifest.py \
+  --metadata-path data/combined/feedbacks_long_range_benchmark.json \
+  --video-dir data/combined/long_range_videos_benchmark \
   --split benchmark \
   --output-path outputs/benchmark_manifest.json
 ```
 
-### Running Evaluation
+### 2. Run evaluation
 
-To evaluate using the included pre-run outputs:
-
-```bash
-python Stage3Llama3.2-3b-Instruct/scripts/stage3_eval.py \
-  --predictions Stage3Llama3.2-4b-Instruct_Outputs/benchmark_predictions_pilot32.json \
-  --references Stage3Llama3.2-4b-Instruct_Outputs/benchmark_manifest.json \
-  --output-path outputs/metrics.json \
-  --tolerance 3.0
-```
-
-Or substitute your own prediction and manifest files:
+Evaluate a predictions JSON file against a benchmark manifest:
 
 ```bash
-python Stage3Llama3.2-3b-Instruct/scripts/stage3_eval.py \
+python scripts/stage3_eval.py \
   --predictions path/to/predictions.json \
-  --references path/to/manifest.json \
+  --references path/to/benchmark_manifest.json \
   --output-path outputs/metrics.json \
   --tolerance 3.0
 ```
 
-`--tolerance` controls the temporal matching window in seconds (default: 3.0).
+Outputs include metrics such as:
+- temporal F-score
+- METEOR
+- ROUGE-L
+- BERTScore
+- generation timing / throughput metrics where available
 
-**Output metrics** (`metrics.json`):
-
-| Metric | Description |
-|---|---|
-| `temporal_f_score` | F-score for temporally-aligned feedback detection |
-| `meteor` | METEOR score over matched feedback pairs |
-| `rougeL` | ROUGE-L score over matched feedback pairs |
-| `bert_score` | BERTScore F1 over matched feedback pairs |
-| `mean_ttft_sec` | Mean time-to-first-token across predictions |
-| `tokens_per_second` | Generation throughput |
+Notes:
+- archived benchmark JSON files under `outputs/` can be used as examples of the expected schema
+- files under `outputs/` were created in an earlier training environment with different absolute filesystem paths
+- manifest JSONs bundled in `outputs/` may therefore contain old absolute cache paths and should not be treated as fresh cache manifests for a new machine
 
 ---
 
 ## Live Webcam Inference
 
-Run real-time coaching feedback from a webcam using a trained Stage 3 adapter:
+Run the webcam demo with your own Stage 2 checkpoint, Stage 3 adapter, and EfficientNet checkpoint:
 
 ```bash
-python Stage3Llama3.2-3b-Instruct/scripts/stage3_webcam_infer.py \
-  --stage2-checkpoint-dir Stage2Llama3.2-3b-Instruct_Output&Weights \
-  --stage3-adapter-dir path/to/final_adapter \
-  --vision-checkpoint Stage3Llama3.2-3b-Instruct/ckpts_efficientnet/fitness_ally_hypermodel/efficientnet4Lite_1.8.3.checkpoint \
+python scripts/stage3_webcam_infer.py \
+  --stage2-checkpoint-dir outputs/<stage2_run_name>/final \
+  --stage3-adapter-dir outputs/<stage3_run_name>/final_adapter \
+  --vision-checkpoint ckpts_efficientnet/fitness_ally_hypermodel/efficientnet4Lite_1.8.3.checkpoint \
   --device auto
 ```
 
-Key optional flags:
+Important note:
+- the script currently includes legacy default path strings from the earlier FitCoach repo layout, so passing the three paths above explicitly is recommended
 
-| Flag | Default | Description |
-|---|---|---|
-| `--camera-index` | `0` | OpenCV camera index |
-| `--capture-fps` | `8.0` | Live frame sampling rate |
-| `--history-sec` | `12.0` | Rolling feature history length |
-| `--decode-interval-sec` | `5.0` | How often to run the LLM decoder |
-| `--max-feedback-tokens` | `32` | Max tokens per feedback span |
-| `--save-log` | None | JSONL path to log emitted feedback events |
-| `--rotate-90-cw` | off | Rotate frames 90° clockwise before encoding |
+Useful optional flags:
+- `--camera-index`
+- `--capture-fps`
+- `--history-sec`
+- `--decode-interval-sec`
+- `--max-feedback-tokens`
+- `--save-log`
+- `--rotate-90-cw`
 
 ---
 
-## HuggingFace Authentication
+## Hugging Face Authentication
 
-The Stage 2 and Stage 3 builds pull `meta-llama/Llama-3.2-3B-Instruct` from HuggingFace. Authenticate before running:
+Stage 2 and Stage 3 load `meta-llama/Llama-3.2-3B-Instruct` from Hugging Face. Authenticate before running:
 
 ```bash
 huggingface-cli login
 ```
 
-Or set the environment variable:
+Or set:
 
 ```bash
 export HF_TOKEN=hf_...
 ```
+
+---
+
+## Acknowledgements
+
+This project was developed with substantial inspiration from Qualcomm AI Research’s FitCoach / Stream-VLM work:
+- GitHub repository: https://github.com/Qualcomm-AI-research/FitCoach
+- Paper: *Live Fitness Coaching as a Testbed for Situated Interaction*
+- Dataset page: https://www.qualcomm.com/developer/software/qevd-dataset
+
+Some files, implementation ideas, and architectural components in this repository were adapted from the original Qualcomm repository. Original copyright and notice headers should be preserved where applicable.
+
+The upstream Qualcomm FitCoach repository is published under the **BSD-3-Clause-Clear** license, as indicated on the original repository. Reuse in this project follows that upstream licensing basis for the borrowed components.
